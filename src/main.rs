@@ -1,13 +1,12 @@
-use axum::{
-    body::Body,
-    http::{Method, StatusCode},
-    response::{IntoResponse, Response},
-    routing::get,
-    Router,
-    body::BoxBody,
-    http::Request
-};
 use std::net::SocketAddr;
+
+use axum::{
+    body::{Body, BoxBody},
+    debug_handler,
+    http::{self, Method, Request, StatusCode},
+    response::{IntoResponse, Response},
+    Router, routing::get,
+};
 use hyper::upgrade::Upgraded;
 use tokio::net::TcpStream;
 use tower::{make::Shared, ServiceExt};
@@ -16,24 +15,19 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 #[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
-    .with(
-        tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| "example_http_proxy=trace,tower_http=debug".into()),
-    )
-    .with(tracing_subscriber::fmt::layer())
-    .init();
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "roads_proxy=trace".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
     let env_port = std::env::var("PORT");
-    let port: u16 = env_port
-        .unwrap_or_else(|_| "3000".into())
-        .parse()
-        .expect("PORT must be a number");
+    let port: u16 = env_port.unwrap_or_else(|_| "3000".into()).parse().unwrap();
 
     let router_svc = Router::new()
-        .route(
-            "/ping",
-            get(|| async { "Pong" })
-        );
+        .route("/ping", get(|| async { "Pong" }))
+        .route("/", get(redirect));
 
     let service = tower::service_fn(move |req: Request<Body>| {
         let router_svc = router_svc.clone();
@@ -56,8 +50,18 @@ async fn main() {
         .expect("server error");
 }
 
+#[debug_handler]
+async fn redirect() -> impl IntoResponse {
+    (Response::builder()
+         .status(StatusCode::PERMANENT_REDIRECT)
+         .header("Location", "https://bento.me/devjunio")
+         .body(())
+         .unwrap()
+     , ())
+}
+
 /// Proxies a CONNECT request to the destination address.
-async fn proxy(req: Request<Body>) -> Result<Response, hyper::Error> {
+async fn proxy(req: Request<Body>) -> http::Result<Response> {
     tracing::trace!(?req);
 
     if let Some(host_addr) = req.uri().authority().map(std::string::ToString::to_string) {
@@ -65,10 +69,10 @@ async fn proxy(req: Request<Body>) -> Result<Response, hyper::Error> {
             match hyper::upgrade::on(req).await {
                 Ok(upgraded) => {
                     if let Err(e) = tunnel(upgraded, host_addr).await {
-                        tracing::warn!("server io error: {}", e);
+                        tracing::warn!("server io error: {e}");
                     };
                 }
-                Err(e) => tracing::warn!("upgrade error: {}", e),
+                Err(e) => tracing::warn!("upgrade error: {e}"),
             }
         });
 
@@ -87,12 +91,7 @@ async fn proxy(req: Request<Body>) -> Result<Response, hyper::Error> {
 async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
     let mut server = TcpStream::connect(addr).await?;
 
-    // `tokio::io::copy_bidirectional` copies from `upgraded` to `server` and from
-    // `server` to `upgraded` in parallel.
-    //
-    // It returns a future that resolves to the number of bytes copied from
-    // `upgraded` to `server` and the number of bytes copied from `server` to
-    // `upgraded`.
+    // It returns a future that swaps copies from `upgraded` with `server`
     let (from_client, from_server) =
         tokio::io::copy_bidirectional(&mut upgraded, &mut server).await?;
 
@@ -100,7 +99,7 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
         "client wrote {} bytes and received {} bytes",
         from_client,
         from_server
-    );
+        );
 
     Ok(())
 }
