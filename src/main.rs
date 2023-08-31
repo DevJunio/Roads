@@ -1,19 +1,21 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, env};
 
 use axum::{
     body::{Body, BoxBody},
     debug_handler,
     http::{self, Method, Request, StatusCode},
     response::{IntoResponse, Response},
-    Router, routing::get,
+    Router, routing::get, extract::Path, Json,
 };
 use hyper::upgrade::Upgraded;
+use sqlx::PgPool;
+use anyhow::Result;
 use tokio::net::TcpStream;
 use tower::{make::Shared, ServiceExt};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -22,12 +24,15 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let env_port = std::env::var("PORT");
-    let port: u16 = env_port.unwrap_or_else(|_| "3000".into()).parse().unwrap();
+    let pool = PgPool::connect(&env::var("DATABASE_URL")?).await?;
+    let _ = add_route(&pool, "/");
 
     let router_svc = Router::new()
         .route("/ping", get(|| async { "Pong" }))
         .route("/", get(redirect));
+
+    let env_port = std::env::var("PORT");
+    let port: u16 = env_port.unwrap_or_else(|_| "3000".into()).parse().unwrap();
 
     let service = tower::service_fn(move |req: Request<Body>| {
         let router_svc = router_svc.clone();
@@ -42,12 +47,37 @@ async fn main() {
     });
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-
     tracing::debug!("listening on {}", addr);
+
     axum::Server::bind(&addr)
         .serve(Shared::new(service))
         .await
         .expect("server error");
+
+    Ok(())
+}
+
+async fn get_route(conn: &PgPool, route: &str) -> Result<()> {
+    let _ = sqlx::query!(r#"
+SELECT redirect_to
+FROM routes
+WHERE route = $1
+"#, route)
+    .fetch_all(conn)
+    .await?;
+
+    Ok(())
+}
+
+async fn add_route(conn: &PgPool, route: &str) -> Result<()> {
+    let _ = sqlx::query!(r#"
+INSERT INTO routes ( route, redirect_to )
+VALUES ( $1, $2 )
+"#, route, "teste_teste")
+    .fetch_one(conn)
+    .await?;
+
+    Ok(())
 }
 
 #[debug_handler]
@@ -57,7 +87,7 @@ async fn redirect() -> impl IntoResponse {
          .header("Location", "https://bento.me/devjunio")
          .body(())
          .unwrap()
-     , ())
+     , ("Redirecting to website..."));
 }
 
 /// Proxies a CONNECT request to the destination address.
