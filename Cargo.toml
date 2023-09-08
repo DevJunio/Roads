@@ -8,11 +8,16 @@ tokio = { version = "1", features=["macros", "rt-multi-thread"] }
 hyper = { version="0.14", features=["full"] }
 tower = { version="0.4", features=["make"] }
 axum = { version = "0.6", features = ["macros"] }
+uuid = { version = "1.4", features = ["v4"] }
 serde = "1"
 serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
+async-trait = "0.1"
+
+[dev-dependencies]
+color-eyre = "0.6"
 
 [dependencies.sqlx]
 version = "0.7"
