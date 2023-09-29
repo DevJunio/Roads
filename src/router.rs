@@ -1,45 +1,38 @@
+use std::sync::Arc;
+
 use axum::{
-    debug_handler,
     extract::{Path, State},
     Json,
     response::{IntoResponse, Response},
     Router, routing::get,
 };
 use hyper::{Body, StatusCode};
+use redis::{Commands, Connection};
 use serde::Deserialize;
+use tokio::sync::Mutex;
+use tracing::log::debug;
 
 #[derive(Deserialize)]
 struct Route {
     redirect_to: String,
 }
 
-pub fn path_routes() -> Router {
+type Db = Arc<Mutex<Connection>>;
+
+// FIXME: add Patch, List and Delete actions
+pub fn path_routes(con: Connection) -> Router {
     Router::new()
-        .route("/*custom_path",
-               get(get_route)
-                   .post(add_route)
-                   .with_state(lol))
+        .route("/*custom_path", get(get_route).post(add_route))
+        .with_state(Arc::new(Mutex::new(con)))
 }
 
-#[debug_handler]
-async fn get_route(
-    State(pool): State<Db>,
-    Path(custom_path): Path<String>,
-) -> impl IntoResponse {
-    tracing::debug!("Getting key from route: {}", &custom_path);
+async fn get_route(State(con): State<Db>, Path(user_path): Path<String>) -> impl IntoResponse {
+    debug!("Getting key from route: {}", &user_path);
+    let val: Result<String, _> = con.lock().await.get(user_path);
 
-    let thing = sqlx::query!(
-r#"
-SELECT redirect_to
-FROM routes
-WHERE route = $1
-"#, &custom_path)
-        .fetch_one(&pool)
-        .await;
-
-    tracing::debug!("got value from route: {:?}", &thing);
-
-    if thing.is_err() {
+    // TODO: set this to show `val` correctly
+    debug!("got value from route: {:#?}", &val);
+    if val.is_err() {
         return Response::builder()
             .body(Body::empty())
             .map_err(internal_error);
@@ -47,40 +40,35 @@ WHERE route = $1
 
     Response::builder()
         .status(StatusCode::PERMANENT_REDIRECT)
-        .header("Location", &thing.unwrap().redirect_to)
+        .header("Location", val.unwrap())
         .body(Body::empty())
         .map_err(internal_error)
 }
 
-#[debug_handler]
 async fn add_route(
-    State(pool): State<Db>,
+    State(con): State<Db>,
     Path(custom_path): Path<String>,
     Json(req): Json<Route>,
 ) -> impl IntoResponse {
-    let _ = sqlx::query!(
-r#"
-INSERT INTO routes ( route, redirect_to, id )
-VALUES ( $1, $2, $3 )
-"#,
-        &custom_path,
-        req.redirect_to,
-        uuid::Uuid::new_v4()
-    )
-        .fetch_one(&pool)
-        .await
-        .map_err(internal_error);
+    let val: Result<String, _> = con.lock().await.set(&custom_path, req.redirect_to);
 
-    tracing::debug!("inserted route: {}", &custom_path);
+    if val.is_err() {
+        return internal_error(val.err().unwrap());
+    }
 
-    (StatusCode::OK, "Route added successfully!")
+    debug!("inserted route: {}", &custom_path);
+    (StatusCode::OK, "Route inserted".into())
 }
 
 /// Utility function for mapping any error into a `500 Internal Server Error`
 /// response.
-fn internal_error<E>(err: E) -> (StatusCode, String)
+fn internal_error<E>(_err: E) -> (StatusCode, String)
     where
         E: std::error::Error,
 {
-    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+    // TODO: add a debug log to print `err` value
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "unknown error has been reported".into(),
+    )
 }

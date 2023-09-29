@@ -4,28 +4,29 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1", features=["macros", "rt-multi-thread"] }
-hyper = { version="0.14", features=["full"] }
-tower = { version="0.4", features=["make"] }
-axum = { version = "0.6", features = ["macros"] }
-uuid = { version = "1.4", features = ["v4"] }
-serde = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# -- Parsing
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
+
+# -- DB
+redis = "0.23"
+
+# -- logs
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-anyhow = "1"
+
+# -- Web
+axum = { version = "0.6", features = ["macros"] }
+hyper = { version = "0.14", features = ["full"] }
+tower-http = { version = "0.4", features = ["fs"] }
+tower-cookies = "0.9"
+
+# -- Others
 async-trait = "0.1"
+thiserror = "1"
 
-[dev-dependencies]
+# -- Dev dependencies
+[dev.dependencies]
+anyhow = "1"
 color-eyre = "0.6"
-
-[dependencies.sqlx]
-version = "0.7"
-features = [
-    "postgres",
-    "tls-rustls",
-    "runtime-tokio",
-    "migrate",
-    "macros",
-    "uuid"
-]
